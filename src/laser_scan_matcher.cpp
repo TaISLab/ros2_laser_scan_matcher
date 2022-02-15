@@ -79,7 +79,7 @@ LaserScanMatcher::LaserScanMatcher() : Node("laser_scan_matcher"), initialized_(
   add_parameter("laser_scan_frame", rclcpp::ParameterValue(std::string("scan")),
     "Which frame to use for the laser_scan_frame");
   add_parameter("laser_scan_topic", rclcpp::ParameterValue(std::string("scan")),
-    "Which topic to subscrige for the laser_scan");
+    "Which topic to subscribe for the laser_scan");
   add_parameter("kf_dist_linear", rclcpp::ParameterValue(0.10),
     "When to generate keyframe scan.");
   add_parameter("kf_dist_angular", rclcpp::ParameterValue(10.0* (M_PI/180.0)),
@@ -335,7 +335,7 @@ bool LaserScanMatcher::getBaseToLaserTf (const std::string& frame_id)
   geometry_msgs::msg::TransformStamped laser_pose_msg;
   try
   {
-      laser_pose_msg = tf_buffer_->lookupTransform(base_frame_, frame_id, t,rclcpp::Duration::from_nanoseconds(10));
+      laser_pose_msg = tf_buffer_->lookupTransform(base_frame_, frame_id, t, rclcpp::Duration(0,10));
       base_to_laser_tf.setOrigin(tf2::Vector3(laser_pose_msg.transform.translation.x,\
                                               laser_pose_msg.transform.translation.y,\
                                               laser_pose_msg.transform.translation.z));
