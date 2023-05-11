@@ -81,7 +81,7 @@ private:
   std::string laser_scan_frame_;
   std::string laser_scan_topic_;
   std::string odom_topic_;
-
+  int odom_time_offset_ns_;
 
   // Keyframe parameters
   double kf_dist_linear_;
