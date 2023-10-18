@@ -1,7 +1,7 @@
 laser_scan_matcher_node:
   ros__parameters:
-    frequency: 30.0
-    delay: 3.0
+    #frequency: 30.0
+    #delay: 3.0
     magnetic_declination_radians: 0.0429351  # For lat/long 55.944831, -3.186998
     yaw_offset: 1.570796327  # IMU reads 0 facing magnetic north, not east
     zero_altitude: false
@@ -16,8 +16,8 @@ laser_scan_matcher_node:
     map_frame: map                   # map frame
     laser_scan_frame: laser          # laser frame
     laser_scan_topic: /scan_filtered # Which topic to subscribe for the laser_scan
-    kf_dist_linear: 0.10             #  When to generate keyframe scan
-    kf_dist_angular: 0.087           # (~5.0º) When to generate keyframe scan
+    kf_dist_linear: 0.05             # When to generate keyframe scan
+    kf_dist_angular: 0.16            # (~10.0º) When to generate keyframe scan
   
     # Laser params
     range_min: -10.0              # Minimum range of the scan_laser_sensor. If -10 it will acquire the value of the laser_scan_topic.
