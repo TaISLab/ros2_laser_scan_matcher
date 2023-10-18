@@ -67,6 +67,8 @@ LaserScanMatcher::LaserScanMatcher() : Node("laser_scan_matcher"), initialized_(
    RCLCPP_INFO(get_logger(), "Creating laser_scan_matcher");
   add_parameter("publish_odom", rclcpp::ParameterValue(std::string("")),
     "If publish odometry from laser_scan. Empty if not, otherwise name of the topic");
+  add_parameter("odom_time_offset_ns", rclcpp::ParameterValue(0),
+    "Miliseconds added to odometry messages");    
   add_parameter("publish_tf",   rclcpp::ParameterValue(false),
     " If publish tf odom->base_link");
   
@@ -206,6 +208,7 @@ LaserScanMatcher::LaserScanMatcher() : Node("laser_scan_matcher"), initialized_(
   kf_dist_linear_  = this->get_parameter("kf_dist_linear").as_double();
   kf_dist_angular_ = this->get_parameter("kf_dist_angular").as_double();
   odom_topic_   = this->get_parameter("publish_odom").as_string();
+  odom_time_offset_ns_ = this->get_parameter("odom_time_offset_ns").as_int();
   publish_tf_   = this->get_parameter("publish_tf").as_bool(); 
 
   range_min_ = this->get_parameter("range_min").as_double();
@@ -461,7 +464,7 @@ bool LaserScanMatcher::processScan(LDP& curr_ldp_scan, const rclcpp::Time& time)
     // stamped Pose message
     nav_msgs::msg::Odometry odom_msg;
 
-    odom_msg.header.stamp    = time;
+    odom_msg.header.stamp    = time +  rclcpp::Duration(0,odom_time_offset_ns_);
     odom_msg.header.frame_id = odom_frame_;
     odom_msg.child_frame_id = base_frame_;
     odom_msg.pose.pose.position.x = f2b_.getOrigin().x();
