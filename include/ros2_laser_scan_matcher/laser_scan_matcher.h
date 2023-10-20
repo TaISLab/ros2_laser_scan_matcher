@@ -103,6 +103,8 @@ private:
   bool initialized_;
   bool publish_odom_;
   bool publish_tf_;
+  bool invert_tf_;
+
 
   tf2::Transform f2b_;     // fixed-to-base tf (pose of base frame in fixed frame)
   tf2::Transform f2b_kf_;  // pose of the last keyframe scan in fixed frame

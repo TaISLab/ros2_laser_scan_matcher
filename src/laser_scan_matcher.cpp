@@ -70,8 +70,9 @@ LaserScanMatcher::LaserScanMatcher() : Node("laser_scan_matcher"), initialized_(
   add_parameter("odom_time_offset_ns", rclcpp::ParameterValue(0),
     "Miliseconds added to odometry messages");    
   add_parameter("publish_tf",   rclcpp::ParameterValue(false),
-    " If publish tf odom->base_link");
-  
+    " If publish tf odom-base_link");
+    add_parameter("invert_tf",   rclcpp::ParameterValue(false),
+    " if published tf is base_frame -> odom_frame instead of odom_frame -> base_frame");
   add_parameter("base_frame", rclcpp::ParameterValue(std::string("base_link")),
     "Which frame to use for the robot base");
   add_parameter("odom_frame", rclcpp::ParameterValue(std::string("odom")),
@@ -210,7 +211,7 @@ LaserScanMatcher::LaserScanMatcher() : Node("laser_scan_matcher"), initialized_(
   odom_topic_   = this->get_parameter("publish_odom").as_string();
   odom_time_offset_ns_ = this->get_parameter("odom_time_offset_ns").as_int();
   publish_tf_   = this->get_parameter("publish_tf").as_bool(); 
-
+  invert_tf_   = this->get_parameter("invert_tf").as_bool();
   range_min_ = this->get_parameter("range_min").as_double();
   range_max_ = this->get_parameter("range_max").as_double();
   angle_min_ = this->get_parameter("angle_min").as_double();
@@ -504,6 +505,15 @@ bool LaserScanMatcher::processScan(LDP& curr_ldp_scan, const rclcpp::Time& time)
     tf_msg.header.frame_id = odom_frame_;
     tf_msg.child_frame_id = base_frame_;
     //tf2::Stamped<tf2::Transform> transform_msg (f2b_, time, map_frame_, base_frame_);
+
+    if (invert_tf_)
+    {
+      tf_msg.transform = f2b_.inverse();
+      tf_msg.header.frame_id = base_frame_;
+      tf_msg.child_frame_id = odom_frame_;
+    }
+
+
     tfB_->sendTransform (tf_msg);
   }
 
