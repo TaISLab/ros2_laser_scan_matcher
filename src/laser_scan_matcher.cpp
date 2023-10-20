@@ -492,27 +492,27 @@ bool LaserScanMatcher::processScan(LDP& curr_ldp_scan, const rclcpp::Time& time)
   
   if (publish_tf_)
   {
+    tf2::Transform f2b_temp = f2b_;
     geometry_msgs::msg::TransformStamped tf_msg;
-    tf_msg.transform.translation.x = f2b_.getOrigin().x();
-    tf_msg.transform.translation.y = f2b_.getOrigin().y();
-    tf_msg.transform.translation.z = f2b_.getOrigin().z();
-    tf_msg.transform.rotation.x = f2b_.getRotation().x();
-    tf_msg.transform.rotation.y = f2b_.getRotation().y();
-    tf_msg.transform.rotation.z = f2b_.getRotation().z();
-    tf_msg.transform.rotation.w = f2b_.getRotation().w();
-  
     tf_msg.header.stamp = time;
-    tf_msg.header.frame_id = odom_frame_;
-    tf_msg.child_frame_id = base_frame_;
-    //tf2::Stamped<tf2::Transform> transform_msg (f2b_, time, map_frame_, base_frame_);
 
     if (invert_tf_)
     {
-      tf_msg.transform = f2b_.inverse();
+      f2b_temp = f2b_.inverse();
       tf_msg.header.frame_id = base_frame_;
       tf_msg.child_frame_id = odom_frame_;
+    } else {
+      tf_msg.header.frame_id = odom_frame_;
+      tf_msg.child_frame_id = base_frame_;
     }
 
+    tf_msg.transform.translation.x = f2b_temp.getOrigin().x();
+    tf_msg.transform.translation.y = f2b_temp.getOrigin().y();
+    tf_msg.transform.translation.z = f2b_temp.getOrigin().z();
+    tf_msg.transform.rotation.x = f2b_temp.getRotation().x();
+    tf_msg.transform.rotation.y = f2b_temp.getRotation().y();
+    tf_msg.transform.rotation.z = f2b_temp.getRotation().z();
+    tf_msg.transform.rotation.w = f2b_temp.getRotation().w();
 
     tfB_->sendTransform (tf_msg);
   }
