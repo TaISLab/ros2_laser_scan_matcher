@@ -51,6 +51,7 @@
 
 #include <csm/csm.h>  // csm defines min and max, but Eigen complains
 #include <boost/thread.hpp>
+#include <array>
 
 
 namespace scan_tools
@@ -104,6 +105,13 @@ private:
   bool publish_odom_;
   bool publish_tf_;
   bool invert_tf_;
+
+  // Diagonal covariance published in the odometry message (never computed by
+  // CSM by default -- do_compute_covariance is expensive -- so downstream
+  // consumers such as robot_localization's EKF need a fixed, tunable
+  // estimate instead of the all-zero covariance this node used to publish).
+  std::array<double, 6> pose_covariance_diag_;
+  std::array<double, 6> twist_covariance_diag_;
 
 
   tf2::Transform f2b_;     // fixed-to-base tf (pose of base frame in fixed frame)

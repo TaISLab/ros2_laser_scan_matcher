@@ -87,7 +87,21 @@ LaserScanMatcher::LaserScanMatcher() : Node("laser_scan_matcher"), initialized_(
     "When to generate keyframe scan.");
   add_parameter("kf_dist_angular", rclcpp::ParameterValue(10.0* (M_PI/180.0)),
     "When to generate keyframe scan.");
-  
+
+  // Fixed diagonal covariance for the published odometry message (x, y, z,
+  // roll, pitch, yaw / vx, vy, vz, vroll, vpitch, vyaw). CSM does not
+  // estimate this per-scan unless do_compute_covariance is enabled (costly),
+  // so a configurable static estimate is used instead -- publishing an
+  // all-zero covariance (the previous behaviour) tells consumers such as
+  // robot_localization's EKF to trust this measurement with infinite
+  // confidence, which is wrong and can destabilize the filter.
+  add_parameter("pose_covariance_diagonal",
+    rclcpp::ParameterValue(std::vector<double>{0.0025, 0.0025, 1e-6, 1e-6, 1e-6, 0.0012}),
+    "Diagonal of the published pose covariance: x, y, z, roll, pitch, yaw (m^2, rad^2).");
+  add_parameter("twist_covariance_diagonal",
+    rclcpp::ParameterValue(std::vector<double>{0.01, 0.01, 1e-6, 1e-6, 1e-6, 0.02}),
+    "Diagonal of the published twist covariance: vx, vy, vz, vroll, vpitch, vyaw ((m/s)^2, (rad/s)^2).");
+
   // Laser params
 
   add_parameter("range_min", rclcpp::ParameterValue(-10.0),
@@ -220,6 +234,16 @@ LaserScanMatcher::LaserScanMatcher() : Node("laser_scan_matcher"), initialized_(
 
   publish_odom_ = (odom_topic_ != "");
   kf_dist_linear_sq_ = kf_dist_linear_ * kf_dist_linear_;
+
+  {
+    auto pose_cov = this->get_parameter("pose_covariance_diagonal").as_double_array();
+    auto twist_cov = this->get_parameter("twist_covariance_diagonal").as_double_array();
+    for (size_t i = 0; i < 6; ++i)
+    {
+      pose_covariance_diag_[i] = (i < pose_cov.size()) ? pose_cov[i] : 1e-6;
+      twist_covariance_diag_[i] = (i < twist_cov.size()) ? twist_cov[i] : 1e-6;
+    }
+  }
 
   input_.max_angular_correction_deg = this->get_parameter("max_angular_correction_deg").as_double();
   input_.max_linear_correction = this->get_parameter("max_linear_correction").as_double();
@@ -477,14 +501,49 @@ bool LaserScanMatcher::processScan(LDP& curr_ldp_scan, const rclcpp::Time& time)
     odom_msg.pose.pose.orientation.z = f2b_.getRotation().z();
     odom_msg.pose.pose.orientation.w = f2b_.getRotation().w();
 
-    odom_msg.twist.twist.linear.y = (f2b_.getOrigin().getY() - prev_y)/dt;
-    odom_msg.twist.twist.linear.x = (f2b_.getOrigin().getX() - prev_x)/dt;
+    // nav_msgs/Odometry.twist is defined in child_frame_id (base_frame_, a
+    // body-fixed frame per REP 103), but this was computing the raw
+    // ODOM_FRAME (world) position delta and publishing it unrotated as if it
+    // were already body-frame. Consumers such as robot_localization take
+    // that contract at face value and re-rotate vx/vy into the world frame
+    // using their OWN current yaw estimate before integrating -- feeding it
+    // an already-world-frame delta under that assumption double-rotates it,
+    // and because the EKF's state-transition Jacobian couples yaw with
+    // vx/vy, that bad velocity residual bleeds into (and can run away) the
+    // yaw estimate even while position tracks the true path closely (seen
+    // live: ATE ~0.1 m but yaw RMSE >100 deg with this bug in place).
+    double new_angle = tf2::getYaw(f2b_.getRotation());
+    double dx_world = f2b_.getOrigin().getX() - prev_x;
+    double dy_world = f2b_.getOrigin().getY() - prev_y;
+    double c = cos(new_angle);
+    double s = sin(new_angle);
 
-    odom_msg.twist.twist.angular.x = (tf2::getYaw(f2b_.getRotation()) - prev_angle)/dt;
+    odom_msg.twist.twist.linear.x = ( c * dx_world + s * dy_world) / dt;
+    odom_msg.twist.twist.linear.y = (-s * dx_world + c * dy_world) / dt;
+
+    // Yaw rate belongs on angular.z (REP 103), not angular.x -- publishing it
+    // on the wrong axis silently breaks any consumer that fuses vyaw (e.g.
+    // robot_localization's odom0_config), since angular.x reads as a
+    // constant zero roll-rate instead.
+    odom_msg.twist.twist.angular.z = (new_angle - prev_angle)/dt;
 
     prev_x = f2b_.getOrigin().getX();
     prev_y = f2b_.getOrigin().getY();
-    prev_angle = tf2::getYaw(f2b_.getRotation());
+    prev_angle = new_angle;
+
+    odom_msg.pose.covariance[0]  = pose_covariance_diag_[0];
+    odom_msg.pose.covariance[7]  = pose_covariance_diag_[1];
+    odom_msg.pose.covariance[14] = pose_covariance_diag_[2];
+    odom_msg.pose.covariance[21] = pose_covariance_diag_[3];
+    odom_msg.pose.covariance[28] = pose_covariance_diag_[4];
+    odom_msg.pose.covariance[35] = pose_covariance_diag_[5];
+
+    odom_msg.twist.covariance[0]  = twist_covariance_diag_[0];
+    odom_msg.twist.covariance[7]  = twist_covariance_diag_[1];
+    odom_msg.twist.covariance[14] = twist_covariance_diag_[2];
+    odom_msg.twist.covariance[21] = twist_covariance_diag_[3];
+    odom_msg.twist.covariance[28] = twist_covariance_diag_[4];
+    odom_msg.twist.covariance[35] = twist_covariance_diag_[5];
 
     odom_publisher_->publish(odom_msg);
   }
