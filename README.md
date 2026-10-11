@@ -96,6 +96,33 @@ The scan matcher itself does not use the IMU (the "Support of IMU" item above is
   its value is in the bags where scan matching drifts in heading, where the same configuration recovered part of the
   error (e.g. 6.5 -> 1.9 deg in one bag). A real fix for those is to use the integrated gyro as the ICP initial guess.
 
+## Planned, NOT implemented: gyro as the ICP initial guess
+
+Today `first_guess` (`laser_scan_matcher.cpp`, `processScan`) is "the robot did not move since the previous scan"
+(`pr_ch = f2b_ * f2b_kf_.inverse()` with `f2b_` still the pose of the previous scan). At ~6 Hz, a fast turn in a
+feature-poor scene makes ICP converge to the wrong rotation, and the EKF downstream can only partly repair it (in
+the mocap bags where scan matching drifts in heading, the gyro-fused EKF recovered e.g. 7.3 -> 1.9 deg in one bag
+but only 29.6 -> 27.6 deg in another). The fix belongs inside the matcher:
+
+1. Subscribe to the raw IMU (`imu_topic` parameter; empty = disabled, current behaviour) and keep ~1 s of samples.
+2. Between the stamps of the previous and the current scan integrate `gz` (trapezoid, interpolating at both ends).
+   Use the *scan* stamps (sweep start), the same timeline the ICP displacement refers to. The sensor z axis points
+   up, so no rotation is needed, but take the base<-imu rotation from TF rather than hard-coding it.
+3. Apply that `dtheta` (and, optionally, constant velocity for x/y from the last twist) to `f2b_` *before* building
+   `pr_ch`, so the guess is "previous pose advanced by the measured motion".
+4. `max_angular_correction_deg` then bounds only the residual, not the whole turn.
+5. Fall back to the current guess when there is no recent IMU sample, and add a plausibility check (drop the prior
+   when the ICP residual relative to it is repeatedly large) plus an enable parameter: a saturated or disconnected
+   gyro would otherwise drag the matcher.
+
+No gyro bias estimation is needed with the raw gyro (offset 0.000 +-0.003 rad/s measured), but it must be the raw
+`/bwt901cl/imu`, not `imu_filtered` (see the section above).
+
+How to evaluate it (`WalKit/walker_mocap_eval/scripts/odom_tuning`): re-run `stage1.py` for the bags in
+`bag_quality.yaml:scan_matching_anomalous` and compare their laser-only heading error and `compare.py --bags
+scan_anom` against the figures above; check on the clean bags that nothing gets worse (laser-only heading ~2.5 deg,
+ATE ~0.216 m).
+
 ## Validation against mocap ground truth
 
 This fork's fixes (covariance, twist frame/axis) and the `odom_frame` gotcha above were found and verified using rosbags with motion-capture ground truth (`mocap4r2_msgs/RigidBodies`) recorded alongside a robot using this node, comparing the fused `nav_msgs/Odometry` trajectory against the mocap-tracked rigid body pose (absolute trajectory error after 2D rigid alignment, plus yaw error). That evaluation tooling — `walker_laser_imu_odom_test.launch.py` (bag replay) and `eval_odom_against_mocap.py` (ATE/yaw-error scoring) — lives in the consuming project (`WalKit/walker_bringup` and `WalKit/walker_mocap_eval/scripts`), not in this package, since it's specific to that robot's mocap setup and calibration; this section exists here so the failure modes above are traceable back to how they were actually diagnosed and confirmed fixed.
