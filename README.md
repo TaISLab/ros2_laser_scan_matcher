@@ -67,6 +67,35 @@ Concretely, in one project built on this fork, `odom_frame` was set to a made-up
 
 If you genuinely need a distinct frame name here (e.g. running this node's output through something other than `robot_localization`, or wanting a clearly-labeled "raw scan-matcher-only" frame for debugging in `rviz`), you must also publish a static (or dynamic) transform bridging that name to whatever `world_frame` your EKF uses, or configure that consumer's own frame-remapping if it offers one — otherwise expect this exact silent-drop failure mode.
 
+## Timing: `dt` and the stamp of the published odometry
+
+- **`dt` comes from the scans' own stamps.** It used to be `now() - last_icp_time_`, i.e. the time between two
+  *processed* callbacks: queueing and ICP compute jitter (large on a Raspberry Pi) and, under bag replay at a rate
+  other than 1, the replay rate itself leaked into the published velocities (distance / dt). It is now
+  `scan.header.stamp - previous scan stamp`, and a non-positive `dt` publishes a zero twist instead of dividing by zero.
+- **The published yaw rate is the wrapped heading difference** (the raw difference of two yaws jumps by 2*pi every
+  time the heading crosses +-pi), and `vx`/`vy` are rotated into the body frame at the middle of the interval.
+- **`odom_time_offset_ns`**: the scan is stamped when the sweep *starts*, but the matched pose describes the robot
+  about half a sweep later. For an RPLidar A1 (`scan_time` ~0.157 s) `80000000` (80 ms) keeps the odometry consistent
+  with a gyro fused in an EKF. Measured against mocap ground truth it also lowers the error of this node's own output.
+
+## Using this node with an IMU in an EKF
+
+The scan matcher itself does not use the IMU (the "Support of IMU" item above is still open). Fused with
+`robot_localization`, the settings that mattered, measured on 47 mocap-labelled bags (see
+`WalKit/walker_bringup/config/walker_ekf.yaml` and `walker_lsm.yaml` for the values):
+
+- `pose_covariance_diagonal` yaw around **0.05 rad2**, not the geometric ~0.001: successive scan matches are chained
+  to the same keyframe, so they are not independent heading measurements. Trusting each at ~2 deg makes the EKF
+  follow every scan's heading noise and ignore the gyro.
+- Feed the EKF the **raw** gyro, not `imu_complementary_filter`'s output: its bias estimator assumes the sensor is
+  stationary and, while moving, subtracts an invented bias (up to 7 deg/s, different in every bag).
+- Check the **sign/frame of the IMU TF** against the data (static accelerometer should read +g on the axis that
+  points up): a wrongly declared 180 deg roll made robot_localization fuse the yaw rate with the opposite sign.
+- Honest outcome: when the scan matcher is healthy the gyro adds nothing measurable (heading error 2.5 deg either way);
+  its value is in the bags where scan matching drifts in heading, where the same configuration recovered part of the
+  error (e.g. 6.5 -> 1.9 deg in one bag). A real fix for those is to use the integrated gyro as the ICP initial guess.
+
 ## Validation against mocap ground truth
 
 This fork's fixes (covariance, twist frame/axis) and the `odom_frame` gotcha above were found and verified using rosbags with motion-capture ground truth (`mocap4r2_msgs/RigidBodies`) recorded alongside a robot using this node, comparing the fused `nav_msgs/Odometry` trajectory against the mocap-tracked rigid body pose (absolute trajectory error after 2D rigid alignment, plus yaw error). That evaluation tooling — `walker_laser_imu_odom_test.launch.py` (bag replay) and `eval_odom_against_mocap.py` (ATE/yaw-error scoring) — lives in the consuming project (`WalKit/walker_bringup` and `WalKit/walker_mocap_eval/scripts`), not in this package, since it's specific to that robot's mocap setup and calibration; this section exists here so the failure modes above are traceable back to how they were actually diagnosed and confirmed fixed.

@@ -418,7 +418,14 @@ bool LaserScanMatcher::processScan(LDP& curr_ldp_scan, const rclcpp::Time& time)
 
   tf2::Transform pr_ch_l;
 
-  double dt = (now() - last_icp_time_).nanoseconds()/1e+9;
+  // Time between the two scans being matched, from the scans' own stamps. It
+  // used to be now() - last_icp_time_ (and last_icp_time_ = now() below),
+  // i.e. the wall/ROS-clock time between two *processed* callbacks: that
+  // includes queueing and ICP compute-time jitter (large on a Raspberry Pi),
+  // and under bag replay at a rate != 1 it is the replay rate, not the sensor
+  // period, so the velocities published below (distance / dt) came out wrong
+  // by the same factor. The scan stamps are the sensor's own timeline.
+  double dt = (time - last_icp_time_).nanoseconds()/1e+9;
   double pr_ch_x, pr_ch_y, pr_ch_a;
   
 
@@ -515,17 +522,32 @@ bool LaserScanMatcher::processScan(LDP& curr_ldp_scan, const rclcpp::Time& time)
     double new_angle = tf2::getYaw(f2b_.getRotation());
     double dx_world = f2b_.getOrigin().getX() - prev_x;
     double dy_world = f2b_.getOrigin().getY() - prev_y;
-    double c = cos(new_angle);
-    double s = sin(new_angle);
+    // Heading change over the interval, wrapped to (-pi, pi]: the raw
+    // difference of two yaws jumps by 2*pi (a ~40 rad/s spike at 6 Hz) every
+    // time the heading crosses +-pi.
+    double dyaw = atan2(sin(new_angle - prev_angle), cos(new_angle - prev_angle));
+    // Rotate the world-frame displacement into the body frame at the middle of
+    // the interval, which is where the average velocity actually applies.
+    double mid_angle = prev_angle + 0.5 * dyaw;
+    double c = cos(mid_angle);
+    double s = sin(mid_angle);
 
-    odom_msg.twist.twist.linear.x = ( c * dx_world + s * dy_world) / dt;
-    odom_msg.twist.twist.linear.y = (-s * dx_world + c * dy_world) / dt;
+    if (dt > 1e-6)
+    {
+      odom_msg.twist.twist.linear.x = ( c * dx_world + s * dy_world) / dt;
+      odom_msg.twist.twist.linear.y = (-s * dx_world + c * dy_world) / dt;
 
-    // Yaw rate belongs on angular.z (REP 103), not angular.x -- publishing it
-    // on the wrong axis silently breaks any consumer that fuses vyaw (e.g.
-    // robot_localization's odom0_config), since angular.x reads as a
-    // constant zero roll-rate instead.
-    odom_msg.twist.twist.angular.z = (new_angle - prev_angle)/dt;
+      // Yaw rate belongs on angular.z (REP 103), not angular.x -- publishing it
+      // on the wrong axis silently breaks any consumer that fuses vyaw (e.g.
+      // robot_localization's odom0_config), since angular.x reads as a
+      // constant zero roll-rate instead.
+      odom_msg.twist.twist.angular.z = dyaw / dt;
+    }
+    else
+    {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+        "Non-positive time between scans (dt=%f s): publishing zero twist", dt);
+    }
 
     prev_x = f2b_.getOrigin().getX();
     prev_y = f2b_.getOrigin().getY();
@@ -590,7 +612,7 @@ bool LaserScanMatcher::processScan(LDP& curr_ldp_scan, const rclcpp::Time& time)
     ld_free(curr_ldp_scan);
 
   }
-  last_icp_time_ = now();
+  last_icp_time_ = time;
   return true;
 }
 
